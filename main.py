@@ -294,7 +294,7 @@ async def button_handler(update, context):
             "3. Never miss a deadline again\n\n"
             "We check 8 websites every 6 hours\n"
             "for new scholarships and send you alerts immediately!\n\n"
-            "Contact admin: @yourusername"
+            "Contact admin: @digitalbello"
         )
 
 async def handle_message(update, context):
