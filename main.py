@@ -333,3 +333,149 @@ async def handle_message(update, context):
         await update.message.reply_text(
             "Use the menu buttons or send /start"
         )
+# -- FLASK APP --
+flask_app = Flask(__name__)
+
+@flask_app.route("/health")
+def health():
+    return "OK", 200
+
+@flask_app.route("/")
+def home():
+    total_subs = subscribers_col.count_documents(
+        {"expiry": {"$gt": datetime.utcnow()}}
+    )
+    total_scholarships = scholarships_col.count_documents({})
+    return jsonify({
+        "status": "running",
+        "active_subscribers": total_subs,
+        "total_scholarships": total_scholarships,
+    })
+
+@flask_app.route("/paystack/webhook", methods=["POST"])
+def paystack_webhook():
+    try:
+        payload = request.get_data()
+        signature = request.headers.get("x-paystack-signature")
+        expected = hmac.new(
+            PAYSTACK_SECRET.encode(),
+            payload,
+            hashlib.sha512
+        ).hexdigest()
+        if signature != expected:
+            return jsonify({"status": "invalid"}), 400
+        data = json.loads(payload)
+        event = data.get("event")
+        if event == "charge.success":
+            charge_data = data["data"]
+            metadata = charge_data.get("metadata", {})
+            identifier = metadata.get("identifier")
+            name = metadata.get("name", "Subscriber")
+            email = charge_data.get("customer", {}).get("email")
+            amount = charge_data.get("amount", 0)
+            expiry = datetime.utcnow() + timedelta(days=30)
+            subscribers_col.update_one(
+                {"identifier": identifier},
+                {"$set": {
+                    "identifier": identifier,
+                    "name": name,
+                    "email": email,
+                    "platform": "telegram",
+                    "expiry": expiry,
+                    "amount_paid": amount,
+                    "last_payment": datetime.utcnow(),
+                }},
+                upsert=True
+            )
+            payments_col.insert_one({
+                "identifier": identifier,
+                "amount": amount,
+                "date": datetime.utcnow(),
+                "reference": charge_data.get("reference"),
+            })
+            send_telegram_message(
+                identifier,
+                f"Payment confirmed! Thank you {name}!\n\n"
+                f"Your subscription is now ACTIVE\n"
+                f"Expires: {expiry.strftime('%d %b %Y')}\n\n"
+                f"You will now receive instant scholarship alerts!"
+            )
+            admin_alert(
+                f"NEW SUBSCRIBER PAID!\n"
+                f"Name: {name}\n"
+                f"Email: {email}\n"
+                f"Amount: N{amount/100:.0f}\n"
+                f"Expiry: {expiry.strftime('%d %b %Y')}"
+            )
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"status": "error"}), 500
+
+@flask_app.route("/admin/stats", methods=["GET"])
+def admin_stats():
+    total_active = subscribers_col.count_documents(
+        {"expiry": {"$gt": datetime.utcnow()}}
+    )
+    total_all = subscribers_col.count_documents({})
+    total_revenue = sum(
+        p["amount"] for p in payments_col.find()
+    ) / 100
+    total_scholarships = scholarships_col.count_documents({})
+    return jsonify({
+        "active_subscribers": total_active,
+        "total_subscribers": total_all,
+        "total_revenue_naira": total_revenue,
+        "total_scholarships_found": total_scholarships,
+    })
+
+@flask_app.route("/admin/broadcast", methods=["POST"])
+def admin_broadcast():
+    data = request.json
+    message = data.get("message")
+    if not message:
+        return jsonify({"error": "No message"}), 400
+    all_subs = subscribers_col.find(
+        {"expiry": {"$gt": datetime.utcnow()}}
+    )
+    sent = 0
+    for sub in all_subs:
+        identifier = sub.get("identifier")
+        platform = sub.get("platform", "telegram")
+        if platform == "telegram":
+            send_telegram_message(identifier, message)
+        elif platform == "whatsapp":
+            send_whatsapp_message(identifier, message)
+        sent += 1
+        time.sleep(1)
+    return jsonify({"sent": sent})
+
+# -- MAIN --
+if __name__ == "__main__":
+    logger.info("Starting Scholarship Alert Bot...")
+    admin_alert("Scholarship Alert Bot is online!")
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        check_and_send_scholarships,
+        "interval",
+        hours=6,
+        id="scholarship_check"
+    )
+    scheduler.start()
+    threading.Thread(
+        target=check_and_send_scholarships,
+        daemon=True
+    ).start()
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CallbackQueryHandler(button_handler))
+    telegram_app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
+    threading.Thread(
+        target=lambda: flask_app.run(
+            host="0.0.0.0", port=PORT, debug=False
+        ),
+        daemon=True
+    ).start()
+    telegram_app.run_polling(drop_pending_updates=True)
