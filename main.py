@@ -112,3 +112,224 @@ def create_paystack_payment(email, identifier, name):
     except Exception as e:
         logger.error(f"Paystack error: {e}")
         return None
+# -- SCHOLARSHIP SCRAPER --
+def scrape_scholars4dev():
+    scholarships = []
+    try:
+        url = "https://www.scholars4dev.com/category/scholarships-by-country/scholarships-for-africans/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, "lxml")
+        articles = soup.find_all("article", limit=10)
+        for article in articles:
+            title_tag = article.find("h2")
+            link_tag = article.find("a")
+            desc_tag = article.find("p")
+            if title_tag and link_tag:
+                scholarships.append({
+                    "title": title_tag.get_text(strip=True),
+                    "link": link_tag.get("href", ""),
+                    "description": desc_tag.get_text(strip=True)[:200] if desc_tag else "",
+                    "source": "scholars4dev",
+                    "date_found": datetime.utcnow(),
+                })
+    except Exception as e:
+        logger.error(f"scholars4dev error: {e}")
+    return scholarships
+
+def scrape_opportunitydesk():
+    scholarships = []
+    try:
+        url = "https://opportunitydesk.org/category/scholarships/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, "lxml")
+        articles = soup.find_all("article", limit=10)
+        for article in articles:
+            title_tag = article.find("h2") or article.find("h3")
+            link_tag = article.find("a")
+            desc_tag = article.find("p")
+            if title_tag and link_tag:
+                scholarships.append({
+                    "title": title_tag.get_text(strip=True),
+                    "link": link_tag.get("href", ""),
+                    "description": desc_tag.get_text(strip=True)[:200] if desc_tag else "",
+                    "source": "opportunitydesk",
+                    "date_found": datetime.utcnow(),
+                })
+    except Exception as e:
+        logger.error(f"opportunitydesk error: {e}")
+    return scholarships
+
+def scrape_afterschoolafrica():
+    scholarships = []
+    try:
+        url = "https://www.afterschoolafrica.com/category/scholarships/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, "lxml")
+        articles = soup.find_all("article", limit=10)
+        for article in articles:
+            title_tag = article.find("h2") or article.find("h3")
+            link_tag = article.find("a")
+            desc_tag = article.find("p")
+            if title_tag and link_tag:
+                scholarships.append({
+                    "title": title_tag.get_text(strip=True),
+                    "link": link_tag.get("href", ""),
+                    "description": desc_tag.get_text(strip=True)[:200] if desc_tag else "",
+                    "source": "afterschoolafrica",
+                    "date_found": datetime.utcnow(),
+                })
+    except Exception as e:
+        logger.error(f"afterschoolafrica error: {e}")
+    return scholarships
+
+def check_and_send_scholarships():
+    logger.info("Checking for new scholarships...")
+    all_scholarships = []
+    all_scholarships.extend(scrape_scholars4dev())
+    all_scholarships.extend(scrape_opportunitydesk())
+    all_scholarships.extend(scrape_afterschoolafrica())
+    new_count = 0
+    for sch in all_scholarships:
+        existing = scholarships_col.find_one({"title": sch["title"]})
+        if not existing:
+            scholarships_col.insert_one(sch)
+            new_count += 1
+            broadcast_scholarship(sch)
+            time.sleep(2)
+    logger.info(f"Found {new_count} new scholarships")
+    if new_count > 0:
+        admin_alert(f"Found {new_count} new scholarships and sent to subscribers!")
+
+def broadcast_scholarship(scholarship):
+    message = (
+        f"NEW SCHOLARSHIP ALERT\n\n"
+        f"Title: {scholarship['title']}\n\n"
+        f"Description: {scholarship['description']}\n\n"
+        f"Link: {scholarship['link']}\n\n"
+        f"Source: {scholarship['source']}\n"
+        f"Found: {scholarship['date_found'].strftime('%d %b %Y')}"
+    )
+    all_subs = subscribers_col.find({"expiry": {"$gt": datetime.utcnow()}})
+    sent = 0
+    for sub in all_subs:
+        identifier = sub.get("identifier", "")
+        platform = sub.get("platform", "telegram")
+        if platform == "telegram":
+            send_telegram_message(identifier, message)
+        elif platform == "whatsapp":
+            send_whatsapp_message(identifier, message)
+        sent += 1
+        time.sleep(1)
+    logger.info(f"Broadcast to {sent} subscribers")
+
+# -- TELEGRAM BOT --
+async def start(update, context):
+    user = update.effective_user
+    identifier = str(update.effective_chat.id)
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "Subscribe N1,500/month", "callback_data": "subscribe"}],
+            [{"text": "View Scholarships", "callback_data": "view"}],
+            [{"text": "My Subscription", "callback_data": "mysub"}],
+            [{"text": "Help", "callback_data": "help"}],
+        ]
+    }
+    await update.message.reply_text(
+        f"Welcome {user.first_name} to Nigeria Scholarship Alert Bot!\n\n"
+        f"Get instant alerts for new scholarships\n"
+        f"For all levels - JAMB, Undergraduate, Masters, PhD\n\n"
+        f"Subscribe for just N1,500/month\n"
+        f"and never miss a scholarship again!\n\n"
+        f"Choose an option below:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Subscribe N1,500/month", callback_data="subscribe")],
+            [InlineKeyboardButton("View Latest Scholarships", callback_data="view")],
+            [InlineKeyboardButton("My Subscription", callback_data="mysub")],
+            [InlineKeyboardButton("Help", callback_data="help")],
+        ])
+    )
+
+async def button_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    identifier = str(query.message.chat_id)
+    user = query.from_user
+    if query.data == "subscribe":
+        await query.message.reply_text(
+            "To subscribe send your email address\n"
+            "Example: yourname@gmail.com"
+        )
+        context.user_data["step"] = "waiting_email"
+    elif query.data == "view":
+        recent = list(scholarships_col.find().sort("date_found", -1).limit(5))
+        if not recent:
+            await query.message.reply_text("No scholarships found yet. Check back soon!")
+            return
+        text = "Latest 5 Scholarships:\n\n"
+        for i, sch in enumerate(recent, 1):
+            text += f"{i}. {sch['title']}\n{sch['link']}\n\n"
+        await query.message.reply_text(text)
+    elif query.data == "mysub":
+        if is_subscribed(identifier):
+            sub = get_subscriber(identifier)
+            expiry = sub["expiry"].strftime("%d %b %Y")
+            await query.message.reply_text(
+                f"Your subscription is ACTIVE\n"
+                f"Expires: {expiry}\n\n"
+                f"You will receive all scholarship alerts automatically!"
+            )
+        else:
+            await query.message.reply_text(
+                "You are not subscribed yet.\n"
+                "Tap Subscribe to get started!"
+            )
+    elif query.data == "help":
+        await query.message.reply_text(
+            "How it works:\n\n"
+            "1. Subscribe for N1,500/month\n"
+            "2. Get instant alerts for new scholarships\n"
+            "3. Never miss a deadline again\n\n"
+            "We check 8 websites every 6 hours\n"
+            "for new scholarships and send you alerts immediately!\n\n"
+            "Contact admin: @yourusername"
+        )
+
+async def handle_message(update, context):
+    text = update.message.text
+    identifier = str(update.effective_chat.id)
+    user = update.effective_user
+    step = context.user_data.get("step")
+    if step == "waiting_email":
+        if "@" not in text or "." not in text:
+            await update.message.reply_text(
+                "Invalid email. Please send a valid email address:"
+            )
+            return
+        email = text.strip()
+        payment_link = create_paystack_payment(
+            email, identifier, user.first_name
+        )
+        if payment_link:
+            await update.message.reply_text(
+                f"Click the link below to pay N1,500:\n\n"
+                f"{payment_link}\n\n"
+                f"After payment your subscription activates automatically!"
+            )
+            context.user_data["step"] = None
+            admin_alert(
+                f"New payment initiated!\n"
+                f"Name: {user.first_name}\n"
+                f"Email: {email}\n"
+                f"Amount: N1,500"
+            )
+        else:
+            await update.message.reply_text(
+                "Payment link error. Please try again later."
+            )
+    else:
+        await update.message.reply_text(
+            "Use the menu buttons or send /start"
+        )
