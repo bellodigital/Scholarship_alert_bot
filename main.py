@@ -119,7 +119,7 @@ def scrape_scholars4dev():
         url = "https://www.scholars4dev.com/category/scholarships-by-country/scholarships-for-africans/"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(resp.text, "html.parser")
         articles = soup.find_all("article", limit=10)
         for article in articles:
             title_tag = article.find("h2")
@@ -143,7 +143,7 @@ def scrape_opportunitydesk():
         url = "https://opportunitydesk.org/category/scholarships/"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(resp.text, "html.parser")
         articles = soup.find_all("article", limit=10)
         for article in articles:
             title_tag = article.find("h2") or article.find("h3")
@@ -167,7 +167,7 @@ def scrape_afterschoolafrica():
         url = "https://www.afterschoolafrica.com/category/scholarships/"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(resp.text, "html.parser")
         articles = soup.find_all("article", limit=10)
         for article in articles:
             title_tag = article.find("h2") or article.find("h3")
