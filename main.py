@@ -452,8 +452,10 @@ def admin_broadcast():
 
 # -- MAIN --
 if __name__ == "__main__":
+    import asyncio
+
     logger.info("Starting Scholarship Alert Bot...")
-    admin_alert("Scholarship Alert Bot is online!")
+
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         check_and_send_scholarships,
@@ -462,20 +464,39 @@ if __name__ == "__main__":
         id="scholarship_check"
     )
     scheduler.start()
+
     threading.Thread(
         target=check_and_send_scholarships,
         daemon=True
     ).start()
-    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CallbackQueryHandler(button_handler))
-    telegram_app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
+
     threading.Thread(
         target=lambda: flask_app.run(
-            host="0.0.0.0", port=PORT, debug=False
+            host="0.0.0.0",
+            port=PORT,
+            debug=False,
+            use_reloader=False
         ),
         daemon=True
     ).start()
-    telegram_app.run_polling(drop_pending_updates=True)
+
+    async def run_bot():
+        telegram_app = (
+            Application.builder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .build()
+        )
+        telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CallbackQueryHandler(button_handler))
+        telegram_app.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                handle_message
+            )
+        )
+        admin_alert("Scholarship Alert Bot is online!")
+        await telegram_app.run_polling(
+            drop_pending_updates=True
+        )
+
+    asyncio.run(run_bot())
