@@ -453,6 +453,7 @@ def admin_broadcast():
 # -- MAIN --
 if __name__ == "__main__":
     import asyncio
+    import sys
 
     logger.info("Starting Scholarship Alert Bot...")
 
@@ -481,22 +482,20 @@ if __name__ == "__main__":
     ).start()
 
     async def run_bot():
-        telegram_app = (
-            Application.builder()
-            .token(TELEGRAM_BOT_TOKEN)
-            .build()
-        )
-        telegram_app.add_handler(CommandHandler("start", start))
-        telegram_app.add_handler(CallbackQueryHandler(button_handler))
-        telegram_app.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
-                handle_message
+        async with Application.builder().token(TELEGRAM_BOT_TOKEN).build() as telegram_app:
+            telegram_app.add_handler(CommandHandler("start", start))
+            telegram_app.add_handler(CallbackQueryHandler(button_handler))
+            telegram_app.add_handler(
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    handle_message
+                )
             )
-        )
-        admin_alert("Scholarship Alert Bot is online!")
-        await telegram_app.run_polling(
-            drop_pending_updates=True
-        )
+            admin_alert("Scholarship Alert Bot is online!")
+            await telegram_app.updater.start_polling(
+                drop_pending_updates=True
+            )
+            await telegram_app.start()
+            await asyncio.Event().wait()
 
     asyncio.run(run_bot())
